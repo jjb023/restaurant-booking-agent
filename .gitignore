@@ -20,7 +20,7 @@ ENV/
 *.swo
 
 # Mock API Server (cloned separately)
-Restaurant-Booking-Mock-APIServer/
+Restaurant-Booking-Mock-API-Server/
 
 # Logs
 *.log
