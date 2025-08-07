@@ -31,15 +31,20 @@ class BookingAPIClient:
             party_size: Optional number of people
         """
         try:
-            params = {'restaurant': self.restaurant_name, 'date': date}
-            if time:
-                params['time'] = time
-            if party_size:
-                params['party_size'] = party_size
+            # Correct endpoint path
+            endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/AvailabilitySearch"
             
-            response = requests.get(
-                f"{self.base_url}/availability",
-                params=params,
+            # Prepare form data
+            data = {
+                'VisitDate': date,
+                'PartySize': str(party_size) if party_size else '2',
+                'ChannelCode': 'ONLINE'
+            }
+            
+            # Use POST instead of GET
+            response = requests.post(
+                endpoint,
+                data=urlencode(data),
                 headers=self.headers
             )
             response.raise_for_status()
@@ -62,21 +67,34 @@ class BookingAPIClient:
             special_requests: Optional special requests
         """
         try:
+            # Correct endpoint path
+            endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/BookingWithStripeToken"
+            
+            # Parse name into first and last
+            name_parts = customer_name.strip().split(' ', 1)
+            first_name = name_parts[0]
+            surname = name_parts[1] if len(name_parts) > 1 else ''
+            
+            # Ensure time has seconds
+            if len(time.split(':')) == 2:
+                time = f"{time}:00"
+            
             data = {
-                'restaurant': self.restaurant_name,
-                'customer_name': customer_name,
-                'date': date,
-                'time': time,
-                'party_size': str(party_size)
+                'VisitDate': date,
+                'VisitTime': time,
+                'PartySize': str(party_size),
+                'ChannelCode': 'ONLINE',
+                'Customer[FirstName]': first_name,
+                'Customer[Surname]': surname
             }
             
             if contact_number:
-                data['contact_number'] = contact_number
+                data['Customer[Mobile]'] = contact_number
             if special_requests:
-                data['special_requests'] = special_requests
+                data['SpecialRequests'] = special_requests
             
             response = requests.post(
-                f"{self.base_url}/bookings",
+                endpoint,
                 data=urlencode(data),
                 headers=self.headers
             )
@@ -94,9 +112,12 @@ class BookingAPIClient:
             booking_id: The booking reference ID
         """
         try:
+            # Correct endpoint path
+            endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/Booking/{booking_id}"
+            
             response = requests.get(
-                f"{self.base_url}/bookings/{booking_id}",
-                headers=self.headers
+                endpoint,
+                headers={'Authorization': f'Bearer {self.bearer_token}'}
             )
             response.raise_for_status()
             return {'success': True, 'data': response.json()}
@@ -113,10 +134,24 @@ class BookingAPIClient:
             **kwargs: Fields to update (date, time, party_size, etc.)
         """
         try:
-            data = {k: v for k, v in kwargs.items() if v is not None}
+            # Correct endpoint path
+            endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/Booking/{booking_id}"
             
-            response = requests.put(
-                f"{self.base_url}/bookings/{booking_id}",
+            data = {}
+            if 'date' in kwargs:
+                data['VisitDate'] = kwargs['date']
+            if 'time' in kwargs:
+                time = kwargs['time']
+                if len(time.split(':')) == 2:
+                    time = f"{time}:00"
+                data['VisitTime'] = time
+            if 'party_size' in kwargs:
+                data['PartySize'] = str(kwargs['party_size'])
+            if 'special_requests' in kwargs:
+                data['SpecialRequests'] = kwargs['special_requests']
+            
+            response = requests.patch(
+                endpoint,
                 data=urlencode(data),
                 headers=self.headers
             )
@@ -134,8 +169,18 @@ class BookingAPIClient:
             booking_id: The booking reference ID
         """
         try:
-            response = requests.delete(
-                f"{self.base_url}/bookings/{booking_id}",
+            # Correct endpoint path
+            endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/Booking/{booking_id}/Cancel"
+            
+            data = {
+                'micrositeName': self.restaurant_name,
+                'bookingReference': booking_id,
+                'cancellationReasonId': '1'  # Customer Request
+            }
+            
+            response = requests.post(
+                endpoint,
+                data=urlencode(data),
                 headers=self.headers
             )
             response.raise_for_status()
