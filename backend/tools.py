@@ -5,7 +5,6 @@ from typing import Optional, Type, Any
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 import re
-from booking_client import BookingAPIClient
 
 
 class DateTimeParser:
@@ -80,10 +79,14 @@ class CheckAvailabilityTool(BaseTool):
     name = "check_availability"
     description = "Check restaurant availability for a specific date and optionally time"
     args_schema: Type[BaseModel] = CheckAvailabilityInput
+    api_client: Any = Field(exclude=True)
     
-    def __init__(self, api_client: BookingAPIClient):
-        super().__init__()
-        self.api_client = api_client
+    class Config:
+        """Configuration for the tool."""
+        arbitrary_types_allowed = True
+    
+    def __init__(self, api_client, **kwargs):
+        super().__init__(api_client=api_client, **kwargs)
     
     def _run(self, date: str, time: Optional[str] = None, party_size: Optional[int] = None) -> str:
         parsed_date = DateTimeParser.parse_date(date)
@@ -101,7 +104,11 @@ class CheckAvailabilityTool(BaseTool):
                     return f"No available slots for {parsed_date}"
             return f"Restaurant is available on {parsed_date}" + (f" at {parsed_time}" if parsed_time else "")
         else:
-            return f"Error checking availability: {result['error']}"
+            return f"Error checking availability: {result.get('error', 'Unknown error')}"
+    
+    async def _arun(self, *args, **kwargs):
+        """Async version - not implemented."""
+        raise NotImplementedError("Async not implemented")
 
 
 class CreateBookingInput(BaseModel):
@@ -117,10 +124,14 @@ class CreateBookingTool(BaseTool):
     name = "create_booking"
     description = "Create a new restaurant booking"
     args_schema: Type[BaseModel] = CreateBookingInput
+    api_client: Any = Field(exclude=True)
     
-    def __init__(self, api_client: BookingAPIClient):
-        super().__init__()
-        self.api_client = api_client
+    class Config:
+        """Configuration for the tool."""
+        arbitrary_types_allowed = True
+    
+    def __init__(self, api_client, **kwargs):
+        super().__init__(api_client=api_client, **kwargs)
     
     def _run(self, customer_name: str, date: str, time: str, party_size: int,
              contact_number: Optional[str] = None, special_requests: Optional[str] = None) -> str:
@@ -137,7 +148,11 @@ class CreateBookingTool(BaseTool):
             return f"Booking confirmed! Reference: {booking.get('booking_id', 'N/A')}. " \
                    f"Table for {party_size} on {parsed_date} at {parsed_time}"
         else:
-            return f"Failed to create booking: {result['error']}"
+            return f"Failed to create booking: {result.get('error', 'Unknown error')}"
+    
+    async def _arun(self, *args, **kwargs):
+        """Async version - not implemented."""
+        raise NotImplementedError("Async not implemented")
 
 
 class GetBookingInput(BaseModel):
@@ -148,10 +163,14 @@ class GetBookingTool(BaseTool):
     name = "get_booking"
     description = "Retrieve details of an existing booking"
     args_schema: Type[BaseModel] = GetBookingInput
+    api_client: Any = Field(exclude=True)
     
-    def __init__(self, api_client: BookingAPIClient):
-        super().__init__()
-        self.api_client = api_client
+    class Config:
+        """Configuration for the tool."""
+        arbitrary_types_allowed = True
+    
+    def __init__(self, api_client, **kwargs):
+        super().__init__(api_client=api_client, **kwargs)
     
     def _run(self, booking_id: str) -> str:
         result = self.api_client.get_booking(booking_id)
@@ -166,7 +185,11 @@ class GetBookingTool(BaseTool):
                    f"Party Size: {booking.get('party_size')}\n" \
                    f"Status: {booking.get('status', 'Confirmed')}"
         else:
-            return f"Could not retrieve booking: {result['error']}"
+            return f"Could not retrieve booking: {result.get('error', 'Unknown error')}"
+    
+    async def _arun(self, *args, **kwargs):
+        """Async version - not implemented."""
+        raise NotImplementedError("Async not implemented")
 
 
 class UpdateBookingInput(BaseModel):
@@ -180,10 +203,14 @@ class UpdateBookingTool(BaseTool):
     name = "update_booking"
     description = "Modify an existing booking (change date, time, or party size)"
     args_schema: Type[BaseModel] = UpdateBookingInput
+    api_client: Any = Field(exclude=True)
     
-    def __init__(self, api_client: BookingAPIClient):
-        super().__init__()
-        self.api_client = api_client
+    class Config:
+        """Configuration for the tool."""
+        arbitrary_types_allowed = True
+    
+    def __init__(self, api_client, **kwargs):
+        super().__init__(api_client=api_client, **kwargs)
     
     def _run(self, booking_id: str, date: Optional[str] = None, 
              time: Optional[str] = None, party_size: Optional[int] = None) -> str:
@@ -211,7 +238,11 @@ class UpdateBookingTool(BaseTool):
             
             return f"Booking {booking_id} updated successfully. Changed: {', '.join(changes)}"
         else:
-            return f"Failed to update booking: {result['error']}"
+            return f"Failed to update booking: {result.get('error', 'Unknown error')}"
+    
+    async def _arun(self, *args, **kwargs):
+        """Async version - not implemented."""
+        raise NotImplementedError("Async not implemented")
 
 
 class CancelBookingInput(BaseModel):
@@ -222,10 +253,14 @@ class CancelBookingTool(BaseTool):
     name = "cancel_booking"
     description = "Cancel an existing booking"
     args_schema: Type[BaseModel] = CancelBookingInput
+    api_client: Any = Field(exclude=True)
     
-    def __init__(self, api_client: BookingAPIClient):
-        super().__init__()
-        self.api_client = api_client
+    class Config:
+        """Configuration for the tool."""
+        arbitrary_types_allowed = True
+    
+    def __init__(self, api_client, **kwargs):
+        super().__init__(api_client=api_client, **kwargs)
     
     def _run(self, booking_id: str) -> str:
         result = self.api_client.cancel_booking(booking_id)
@@ -233,4 +268,8 @@ class CancelBookingTool(BaseTool):
         if result['success']:
             return f"Booking {booking_id} has been cancelled successfully"
         else:
-            return f"Failed to cancel booking: {result['error']}"
+            return f"Failed to cancel booking: {result.get('error', 'Unknown error')}"
+    
+    async def _arun(self, *args, **kwargs):
+        """Async version - not implemented."""
+        raise NotImplementedError("Async not implemented")

@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 class BookingAgent:
     """Conversational agent for restaurant bookings."""
     
-    def __init__(self, api_client: BookingAPIClient, llm_model: str = "gpt-4", temperature: float = 0.7):
+    def __init__(self, api_client: BookingAPIClient, llm_model: str = "gpt-3.5-turbo", temperature: float = 0.7):
         self.api_client = api_client
         self.llm = ChatOpenAI(model=llm_model, temperature=temperature)
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
-            return_messages=True
+            return_messages=True,
+            output_key="output"
         )
         
         # Initialize tools
@@ -85,7 +86,9 @@ class BookingAgent:
             memory=self.memory,
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=5
+            max_iterations=5,
+            return_intermediate_steps=False,
+            output_key="output"
         )
     
     def process_message(self, message: str, session_id: Optional[str] = None) -> str:
@@ -104,14 +107,30 @@ class BookingAgent:
             if session_id and session_id not in self.session_data:
                 self.session_data[session_id] = {}
             
-            # Run the agent
-            response = self.agent_executor.run(input=message)
+            # Use invoke instead of run (for LangChain 0.1.0+)
+            result = self.agent_executor.invoke({"input": message})
+            
+            # Extract the response from the result
+            if isinstance(result, dict):
+                response = result.get("output", "I couldn't process your request.")
+            else:
+                response = str(result)
             
             return response
             
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            return "I apologize, but I encountered an error processing your request. Please try again."
+            # Provide a more helpful fallback response
+            if "availability" in message.lower():
+                return "I can help you check availability. Please specify a date (like 'this weekend' or 'next Friday') and I'll check what's available."
+            elif "book" in message.lower() or "reservation" in message.lower():
+                return "I can help you make a reservation. I'll need: your name, the date, time, and number of people. For example: 'Book a table for 4 people next Friday at 7pm under the name John Smith'."
+            elif "cancel" in message.lower():
+                return "I can help you cancel a reservation. Please provide your booking reference number (it starts with 'BK')."
+            elif "change" in message.lower() or "modify" in message.lower():
+                return "I can help you modify your reservation. Please provide your booking reference and what you'd like to change."
+            else:
+                return "I apologize, but I encountered an error processing your request. I can help you with checking availability, making reservations, checking bookings, modifying reservations, or cancelling bookings. Please try again."
     
     def clear_memory(self, session_id: Optional[str] = None):
         """Clear conversation memory for a session."""
