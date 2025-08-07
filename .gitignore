@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Environment files
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Mock API Server (cloned separately)
+Restaurant-Booking-Mock-APIServer/
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# MacOS
+.DS_Store
+
+# Test coverage
+htmlcov/
+.coverage
+.pytest_cache/
+coverage.xml
+
+# Node modules (if you add any)
+node_modules/
