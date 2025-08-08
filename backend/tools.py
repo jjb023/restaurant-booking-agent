@@ -140,6 +140,10 @@ class CheckAvailabilityTool(BaseTool):
     
     def _run(self, date: str, time: Optional[str] = None, party_size: Optional[int] = None) -> str:
         """Execute the availability check."""
+        # Validate input parameters
+        if not date or date.lower() in ['none', 'null', '']:
+            return "❌ Please provide a specific date to check availability (e.g., 'tomorrow', 'saturday', '2025-01-15')"
+        
         parsed_date = DateTimeParser.parse_date(date)
         parsed_time = DateTimeParser.parse_time(time) if time else None
         
@@ -185,6 +189,19 @@ class CreateBookingTool(BaseTool):
     def _run(self, customer_name: str, date: str, time: str, party_size: int,
              contact_number: Optional[str] = None, special_requests: Optional[str] = None) -> str:
         """Execute the booking creation."""
+        # Validate input parameters
+        if not customer_name or customer_name.lower() in ['none', 'null', '']:
+            return "❌ Please provide a valid customer name for the reservation."
+        
+        if not date or date.lower() in ['none', 'null', '']:
+            return "❌ Please provide a valid date for the reservation."
+        
+        if not time or time.lower() in ['none', 'null', '']:
+            return "❌ Please provide a valid time for the reservation."
+        
+        if not party_size or party_size <= 0:
+            return "❌ Please provide a valid party size (number of people)."
+        
         # Validate customer name is not a tool name
         invalid_names = ['check', 'cancel', 'update', 'create', 'booking', 'reservation', 
                         'check availability', 'create booking', 'cancel booking']
@@ -193,6 +210,16 @@ class CreateBookingTool(BaseTool):
         
         parsed_date = DateTimeParser.parse_date(date)
         parsed_time = DateTimeParser.parse_time(time)
+        
+        # Confirm the booking details before proceeding
+        confirmation = f"""✅ I understand your booking details:
+
+👤 **Name:** {customer_name}
+📅 **Date:** {parsed_date}
+🕐 **Time:** {parsed_time}
+👥 **Party Size:** {party_size} people
+
+Creating your reservation now..."""
         
         result = self.api_client.create_booking(
             customer_name, parsed_date, parsed_time, party_size,
