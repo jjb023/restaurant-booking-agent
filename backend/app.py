@@ -9,7 +9,7 @@ import os
 import uuid
 import logging
 from booking_client import BookingAPIClient
-from agent_ollama import BookingAgent
+from agent import BookingAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ api_client = BookingAPIClient(
 # Initialize Ollama agent with better configuration
 agent = BookingAgent(
     api_client=api_client,
-    model_name=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
+    model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
     temperature=0.3,
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 )
