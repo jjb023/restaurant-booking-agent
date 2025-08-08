@@ -1,633 +1,267 @@
 """LangChain agent implementation using Ollama for restaurant bookings."""
 
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.memory import ConversationBufferMemory
-from langchain.prompts import PromptTemplate
-from langchain_ollama import ChatOllama
-from typing import List, Dict, Any, Optional
+import os
 import logging
+from typing import Optional, Dict, Any
+from langchain_ollama import ChatOllama
+from langchain.schema import HumanMessage, SystemMessage
 from booking_client import BookingAPIClient
-from tools import (
-    CheckAvailabilityTool, CreateBookingTool, GetBookingTool,
-    UpdateBookingTool, CancelBookingTool
-)
+from tools import CheckAvailabilityTool, CreateBookingTool, GetBookingTool, UpdateBookingTool, CancelBookingTool
 
 logger = logging.getLogger(__name__)
 
-
 class BookingAgent:
-    """Conversational agent for restaurant bookings using Ollama."""
-    
-    def __init__(
-        self, 
-        api_client: BookingAPIClient, 
-        model_name: str = "llama3.2:3b",
-        temperature: float = 0.3,
-        base_url: str = "http://localhost:11434"
-    ):
+    def __init__(self, api_client: BookingAPIClient, model_name: str = "llama3.2:3b", 
+                 temperature: float = 0.3, base_url: str = "http://localhost:11434"):
         self.api_client = api_client
-        
-        # Initialize Ollama LLM with optimized settings
         self.llm = ChatOllama(
             model=model_name,
             temperature=temperature,
-            base_url=base_url,
-            timeout=30
-        )
-        
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
+            base_url=base_url
         )
         
         # Initialize tools
-        self.tools = [
-            CheckAvailabilityTool(api_client),
-            CreateBookingTool(api_client),
-            GetBookingTool(api_client),
-            UpdateBookingTool(api_client),
-            CancelBookingTool(api_client)
-        ]
+        self.tools = {
+            'check_availability': CheckAvailabilityTool(api_client),
+            'create_booking': CreateBookingTool(api_client),
+            'get_booking': GetBookingTool(api_client),
+            'update_booking': UpdateBookingTool(api_client),
+            'cancel_booking': CancelBookingTool(api_client)
+        }
         
-        # Create the agent with enhanced prompt for better conversation flow
-        self.agent_executor = self._create_agent()
+        # Session data for conversation state
+        self.session_data = {}
         
-        # Store session data for better context management
-        self.session_data: Dict[str, Any] = {}
-    
-    def _create_agent(self) -> AgentExecutor:
-        """Create the ReAct agent with enhanced prompt for better conversation flow."""
-        
-        # Enhanced prompt with better conversation guidelines and clearer ReAct format
-        prompt = PromptTemplate.from_template("""You are a helpful and friendly restaurant booking assistant for TheHungryUnicorn restaurant.
+        # System prompt for natural language understanding
+        self.system_prompt = """You are a helpful restaurant booking assistant for TheHungryUnicorn restaurant. 
 
-IMPORTANT GUIDELINES:
-1. Always be polite, professional, and enthusiastic
-2. When you understand booking details from the user, CONFIRM them before taking action
-3. Use the tools to perform actual booking operations
-4. If the user provides booking details (name, date, time, party size), confirm them and then use create_booking tool
-5. If the user asks for availability, use check_availability tool with a specific date
-6. Always provide clear, helpful responses with emojis when appropriate
-7. Remember context from previous messages in the conversation
-8. DO NOT call tools with None or empty parameters - only call tools when you have valid information
-9. For simple greetings like "hello", "hi", "hey" - just provide a friendly welcome message WITHOUT using any tools
-10. Only use tools when the user specifically asks for booking operations or availability checks
-11. After using a tool, provide a clear final answer summarizing the result
+Your job is to understand what the user wants and respond naturally. You can:
 
-Available tools: {tool_names}
+1. **Greet users warmly** - Be friendly and welcoming
+2. **Understand booking requests** - Extract name, date, time, party size
+3. **Handle availability checks** - Understand when users want to check available times
+4. **Manage existing bookings** - Help with viewing, updating, or canceling bookings
+5. **Provide helpful responses** - Give clear, friendly answers with emojis when appropriate
 
-You have access to these tools:
+**Important Guidelines:**
+- Be polite, professional, and enthusiastic
+- Use emojis to make responses friendly
+- Ask for missing information when needed
+- Confirm details before taking actions
+- Provide clear next steps
 
-{tools}
+**Available Actions:**
+- check_availability(date, time, party_size)
+- create_booking(name, date, time, party_size)
+- get_booking(reference)
+- update_booking(reference, details)
+- cancel_booking(reference)
 
-Previous conversation:
-{chat_history}
+Respond naturally and helpfully!"""
 
-Current question: {input}
-
-To answer, use this exact format:
-
-Thought: I need to figure out what the customer wants
-Action: [one of {tool_names}]
-Action Input: the input parameters for the action
-Observation: the result of the action
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin! Remember to be helpful, friendly, and provide excellent customer service.
-
-{agent_scratchpad}""")
-        
+    def _extract_info(self, message: str) -> Dict[str, Any]:
+        """Extract structured information from user message using LLM."""
         try:
-            agent = create_react_agent(
-                llm=self.llm,
-                tools=self.tools,
-                prompt=prompt
-            )
+            # Use LLM to extract information with a more explicit prompt
+            extraction_prompt = f"""Extract booking information from: "{message}"
+
+IMPORTANT: Only extract information that is EXPLICITLY mentioned in the message.
+Do NOT assume or guess any values. Use null for anything not clearly stated.
+
+Return ONLY a JSON object with these fields (use null if not found):
+- intent: "greeting", "booking", "availability", "check_booking", "cancel_booking", "update_booking"
+- name: customer name (only if explicitly mentioned)
+- date: date (e.g., "tomorrow", "saturday", "2025-01-15")
+- time: time (e.g., "7pm", "19:30")
+- party_size: number of people (only if explicitly mentioned)
+- reference: booking reference number
+
+Example: {{"intent": "booking", "name": null, "date": "tomorrow", "time": "7pm", "party_size": null, "reference": null}}
+
+JSON response:"""
+
+            response = self.llm.invoke([HumanMessage(content=extraction_prompt)])
+            content = response.content.strip()
             
-            return AgentExecutor(
-                agent=agent,
-                tools=self.tools,
-                memory=self.memory,
-                verbose=True,
-                handle_parsing_errors=True,
-                max_iterations=2,  # Reduced from 3 to 2
-                early_stopping_method="force"  # Changed from "generate" to "force"
-            )
-        except Exception as e:
-            logger.error(f"Error creating agent: {e}")
-            raise
-    
-    def process_message(self, message: str, session_id: Optional[str] = None) -> str:
-        """Process a user message and return the agent's response."""
-        try:
-            # Store session data for better context management
-            if session_id and session_id not in self.session_data:
-                self.session_data[session_id] = {
-                    'booking_info': {},
-                    'conversation_step': 'greeting'
-                }
+            # Try to parse JSON from the response
+            import json
+            import re
             
-            session = self.session_data[session_id] if session_id else {}
-            booking_info = session.get('booking_info', {})
-            conversation_step = session.get('conversation_step', 'greeting')
-            
-            # Check for simple greetings first - handle these directly without agent
-            message_lower = message.lower().strip()
-            if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
-                if session_id:
-                    session['conversation_step'] = 'greeting'
-                return """🍽️ Welcome to TheHungryUnicorn! I can help you with:
-
-• 📅 Check availability for any date
-• 🎯 Make a new reservation
-• 📋 View your existing booking details
-• ✏️ Modify or cancel your reservation
-
-What would you like to do today?"""
-            
-            # Handle availability requests directly
-            if any(word in message_lower for word in ['availability', 'available', 'check', 'times']) and any(word in message_lower for word in ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'tomorrow', 'today', 'weekend']):
-                # Extract date from message
-                date = self._extract_date_from_message(message)
-                if date:
-                    return self._check_availability_direct(date)
-                else:
-                    return """📅 I can check availability for you! 
-
-What date and time are you interested in? You can say things like:
-• "tomorrow"
-• "saturday"
-• "next friday"
-• "2025-08-15"
-
-What date would you like to check?"""
-            
-            # Handle booking requests directly
-            if any(word in message_lower for word in ['book', 'reserve', 'table', 'reservation']):
-                booking_info = self._extract_booking_info_from_message(message)
-                if booking_info and all(booking_info.values()):
-                    return self._create_booking_direct(booking_info)
-                else:
-                    if session_id:
-                        session['conversation_step'] = 'asking_name'
-                    return """🎯 I'd be happy to help you make a reservation! 
-
-To get started, I'll need a few details:
-• Your name
-• Date you'd like to visit (e.g., "tomorrow", "saturday", "2025-08-15")
-• Time you prefer (e.g., "7pm", "19:30")
-• Number of people in your party
-
-What's your name?"""
-            
-            # Handle conversation flow based on current step
-            if conversation_step == 'asking_name' and self._is_likely_name_input(message):
-                # Extract name and store it
-                name = self._extract_name_from_message(message)
-                if name and session_id:
-                    session['booking_info']['name'] = name
-                    session['conversation_step'] = 'asking_date'
-                return f"Thanks {name}! What date would you like to visit? (e.g., 'tomorrow', 'saturday', 'next friday')"
-            
-            elif conversation_step == 'asking_date' and self._is_likely_date_input(message):
-                # Extract date and store it
-                date = self._extract_date_from_message(message)
-                if date and session_id:
-                    session['booking_info']['date'] = date
-                    session['conversation_step'] = 'asking_time'
-                return "What time would you prefer? (e.g., '7pm', '19:30')"
-            
-            elif conversation_step == 'asking_time' and self._is_likely_time_input(message):
-                # Extract time and store it
-                time = self._extract_time_from_message(message)
-                if time and session_id:
-                    session['booking_info']['time'] = time
-                    session['conversation_step'] = 'asking_party_size'
-                return "How many people will be in your party?"
-            
-            elif conversation_step == 'asking_party_size' and self._is_likely_party_size_input(message):
-                # Extract party size and create booking
-                party_size = self._extract_party_size_from_message(message)
-                if party_size and session_id:
-                    session['booking_info']['party_size'] = party_size
-                    # Create the booking with all collected info
-                    return self._create_booking_direct(session['booking_info'])
-            
-            # For other cases, try the agent but with better error handling
-            try:
-                response = self.agent_executor.invoke({"input": message})
-                
-                # Debug: Log the response structure
-                logger.info(f"Agent response type: {type(response)}")
-                if isinstance(response, dict):
-                    logger.info(f"Agent response keys: {response.keys()}")
-                
-                # Extract the output - handle different response formats
-                if isinstance(response, dict):
-                    if 'output' in response:
-                        final_response = response['output']
-                    elif 'result' in response:
-                        final_response = response['result']
-                    else:
-                        # If no clear output, try to extract from the response
-                        final_response = str(response)
-                else:
-                    final_response = str(response)
-                
-                # Debug: Log the final response
-                logger.info(f"Final response: {final_response[:100]}...")
-                
-                return final_response
-                
-            except Exception as agent_error:
-                logger.error(f"Agent error: {agent_error}")
-                # Fallback to direct LLM response
-                return self._fallback_response(message)
-            
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            # Fallback to direct response if agent fails
-            return self._fallback_response(message)
-    
-    def _fallback_response(self, message: str) -> str:
-        """Enhanced fallback response with better conversation handling."""
-        try:
-            # Parse message for intent
-            message_lower = message.lower()
-            
-            # Check for simple greetings
-            if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
-                return """🍽️ Welcome to TheHungryUnicorn! I can help you with:
-
-• 📅 Check availability for any date
-• 🎯 Make a new reservation
-• 📋 View your existing booking details
-• ✏️ Modify or cancel your reservation
-
-What would you like to do today?"""
-            
-            # Check for common intents with better responses
-            if any(word in message_lower for word in ['book', 'reserve', 'table', 'reservation']):
-                return """🎯 I'd be happy to help you make a reservation! 
-
-To get started, I'll need a few details:
-• Your name
-• Date you'd like to visit (e.g., "tomorrow", "saturday", "2025-08-15")
-• Time you prefer (e.g., "7pm", "19:30")
-• Number of people in your party
-
-What's your name?"""
-            
-            elif any(word in message_lower for word in ['availability', 'available', 'free', 'times']):
-                return """📅 I can check availability for you! 
-
-What date and time are you interested in? You can say things like:
-• "tomorrow"
-• "saturday"
-• "next friday"
-• "2025-08-15"
-
-What date would you like to check?"""
-            
-            elif any(word in message_lower for word in ['cancel', 'cancellation']):
-                return """❌ I can help you cancel your reservation. 
-
-Could you please provide your booking reference? It's usually a 6-8 character code like "ABC123"."""
-            
-            elif any(word in message_lower for word in ['change', 'modify', 'update']):
-                return """✏️ I can help you modify your reservation. 
-
-Please provide:
-• Your booking reference
-• What you'd like to change (date, time, or party size)"""
-            
-            elif any(word in message_lower for word in ['check', 'status', 'my booking', 'my reservation']):
-                return """📋 I can look up your reservation details. 
-
-Please provide your booking reference to see your reservation details."""
-            
-            else:
-                # General response using LLM with better prompt
-                prompt = f"""You are a helpful restaurant booking assistant for TheHungryUnicorn restaurant.
-
-Customer message: {message}
-
-Provide a brief, friendly response. If they want to make a booking, ask for: name, date, time, and party size.
-If they want to check/modify/cancel, ask for their booking reference.
-Use emojis to make it friendly and engaging.
-
-Response:"""
-                
-                response = self.llm.invoke(prompt)
-                
-                # Handle different response types
-                if hasattr(response, 'content'):
-                    return response.content
-                elif isinstance(response, dict) and 'content' in response:
-                    return response['content']
-                else:
-                    return str(response)
-                    
-        except Exception as e:
-            logger.error(f"Fallback response error: {e}")
-            return """🍽️ Welcome to TheHungryUnicorn! I can help you with:
-
-• 📅 Check availability for any date
-• 🎯 Make a new reservation
-• 📋 View your existing booking details
-• ✏️ Modify or cancel your reservation
-
-What would you like to do today?"""
-    
-    def _extract_date_from_message(self, message: str) -> str:
-        """Extract date from message using simple patterns."""
-        message_lower = message.lower()
-        from datetime import datetime, timedelta
-        
-        today = datetime.now()
-        
-        if "today" in message_lower:
-            return today.strftime('%Y-%m-%d')
-        elif "tomorrow" in message_lower:
-            return (today + timedelta(days=1)).strftime('%Y-%m-%d')
-        elif "weekend" in message_lower:
-            days_ahead = 5 - today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
-        else:
-            weekdays = {
-                "monday": 0, "tuesday": 1, "wednesday": 2,
-                "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6
-            }
-            for day, idx in weekdays.items():
-                if day in message_lower:
-                    days_ahead = (idx - today.weekday()) % 7
-                    if days_ahead == 0:
-                        days_ahead = 7
-                    return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
-        
-        return None
-    
-    def _extract_booking_info_from_message(self, message: str) -> dict:
-        """Extract booking information from message."""
-        import re
-        info = {}
-        message_lower = message.lower()
-        
-        # Extract name
-        name_patterns = [
-            r"(?:my name is|i am|i'm|it's|call me)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)$",
-            r"(?:for|under the name of)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)"
-        ]
-        
-        for pattern in name_patterns:
-            if match := re.search(pattern, message.strip(), re.I):
-                name = match.group(1).strip()
-                if not any(word in name.lower() for word in ['today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
-                    info['name'] = name
-                    break
-        
-        # Extract date
-        info['date'] = self._extract_date_from_message(message)
-        
-        # Extract time
-        time_patterns = [
-            r'(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>[ap]m)?',
-            r'(?P<hour>\d{1,2})\s*(?P<ampm>[ap]m)',
-            r'\b(?P<hour>\d{1,2})\b(?!\s*(?:people?|guests?|persons?))'
-        ]
-        
-        for pattern in time_patterns:
-            if match := re.search(pattern, message_lower):
+            # Look for JSON in the response
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
                 try:
-                    hour = int(match.group("hour"))
-                    minute = int(match.group("minute")) if "minute" in match.groupdict() and match.group("minute") else 0
-                    meridiem = match.group("ampm") if "ampm" in match.groupdict() else None
-
-                    if meridiem == 'pm' and hour < 12:
-                        hour += 12
-                    elif meridiem == 'am' and hour == 12:
-                        hour = 0
-
-                    if 10 <= hour <= 23:
-                        info['time'] = f"{hour:02d}:{minute:02d}:00"
-                        break
-                except ValueError:
-                    continue
-        
-        # Extract party size
-        party_patterns = [
-            r'\b(\d+)\s*(?:people?|guests?|persons?)\b',
-            r'\b(?:party of|table for|reservation for)\s*(\d+)\b',
-            r'\b(\d+)\b(?!\s*(?:pm|am|:))'
-        ]
-        
-        for pattern in party_patterns:
-            if match := re.search(pattern, message_lower):
-                num = int(match.group(1))
-                if 1 <= num <= 20:
-                    info['party_size'] = num
-                    break
-        
-        return info
-    
-    def _check_availability_direct(self, date: str) -> str:
-        """Check availability directly without agent."""
-        try:
-            result = self.api_client.check_availability(date)
+                    extracted_info = json.loads(json_match.group())
+                    logger.info(f"Extracted info: {extracted_info}")
+                    return extracted_info
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse JSON from: {content}")
             
-            if result['success']:
-                slots = result.get('data', {}).get('available_slots', [])
-                if slots:
-                    times = [s['time'].replace(':00', '') if isinstance(s, dict) else str(s).replace(':00', '') 
-                            for s in slots[:8]]
-                    return f"✅ Available times for {date}:\n" + \
-                           "\n".join(f"• {t}" for t in times) + \
-                           f"\n\n🎯 To book one of these times, just reply with your preferred time!"
-                else:
-                    return f"❌ No available slots for {date}. Would you like to try another date?"
-            return "❌ Couldn't check availability. Please try again."
+            # If LLM didn't return proper JSON, use fallback pattern matching
+            logger.info("LLM didn't return proper JSON, using fallback pattern matching")
+            return self._fallback_extract_info(message)
+            
+        except Exception as e:
+            logger.error(f"Error extracting info: {e}")
+            return self._fallback_extract_info(message)
+
+    def _fallback_extract_info(self, message: str) -> Dict[str, Any]:
+        """Fallback pattern matching when LLM extraction fails."""
+        message_lower = message.lower().strip()
+        
+        # Check for greetings
+        if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
+            return {"intent": "greeting", "name": None, "date": None, "time": None, "party_size": None, "reference": None}
+        
+        # Check for availability requests
+        if any(word in message_lower for word in ['availability', 'available', 'check', 'times']) and any(word in message_lower for word in ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'tomorrow', 'today', 'weekend']):
+            # Extract date from message
+            date = self._extract_date_from_message(message)
+            return {"intent": "availability", "name": None, "date": date, "time": None, "party_size": None, "reference": None}
+        
+        # Check for booking requests
+        if any(word in message_lower for word in ['book', 'reserve', 'table', 'reservation']):
+            return {"intent": "booking", "name": None, "date": None, "time": None, "party_size": None, "reference": None}
+        
+        # Check for check booking requests
+        if any(word in message_lower for word in ['check my booking', 'my booking', 'my reservation', 'view booking', 'show booking']):
+            return {"intent": "check_booking", "name": None, "date": None, "time": None, "party_size": None, "reference": None}
+        
+        # Check for cancel booking requests
+        if any(word in message_lower for word in ['cancel my reservation', 'cancel booking', 'cancel reservation']):
+            return {"intent": "cancel_booking", "name": None, "date": None, "time": None, "party_size": None, "reference": None}
+        
+        # Check if message is just a number (likely a booking reference)
+        if message.strip().isdigit():
+            return {"intent": "check_booking", "name": None, "date": None, "time": None, "party_size": None, "reference": message.strip()}
+        
+        # Check for complete booking info (comma-separated) - be more conservative
+        if ',' in message:
+            parts = [part.strip() for part in message.split(',')]
+            if len(parts) >= 4:
+                # Try to extract booking info from comma-separated format
+                name = parts[0].strip()
+                # Only use name if it looks like a real name (not a date/time word)
+                if not any(word in name.lower() for word in ['tomorrow', 'today', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'pm', 'am', 'people']):
+                    date = self._extract_date_from_message(parts[1].strip())
+                    time = self._extract_time_from_message(parts[2].strip())
+                    party_size = self._extract_party_size_from_message(parts[3].strip())
+                    
+                    if all([name, date, time, party_size]):
+                        return {"intent": "booking", "name": name, "date": date, "time": time, "party_size": party_size, "reference": None}
+        
+        # Default to unknown
+        return {"intent": "unknown", "name": None, "date": None, "time": None, "party_size": None, "reference": None}
+
+    def _generate_response(self, message: str, context: str = "") -> str:
+        """Generate a natural response using the LLM."""
+        try:
+            prompt = f"""Context: {context}
+
+User message: "{message}"
+
+Respond naturally and helpfully as a restaurant booking assistant. Be friendly and use emojis when appropriate."""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            return response.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            return "I'm having trouble understanding. Could you please try again?"
+
+    def _check_availability(self, date: str, time: Optional[str] = None, party_size: Optional[int] = None) -> str:
+        """Check availability using the tool."""
+        try:
+            result = self.tools['check_availability']._run(date, time, party_size)
+            return result
         except Exception as e:
             logger.error(f"Error checking availability: {e}")
-            return "❌ Error checking availability. Please try again."
-    
-    def _create_booking_direct(self, info: dict) -> str:
-        """Create booking directly without agent."""
+            return f"Sorry, I couldn't check availability. Error: {str(e)}"
+
+    def _create_booking(self, name: str, date: str, time: str, party_size: int) -> str:
+        """Create a booking using the tool."""
         try:
-            result = self.api_client.create_booking(
-                customer_name=info['name'],
-                date=info['date'],
-                time=info['time'],
-                party_size=info['party_size']
-            )
+            # Convert natural language date to YYYY-MM-DD format
+            converted_date = self._convert_natural_date(date)
+            if converted_date:
+                date = converted_date
             
-            if result['success']:
-                booking_id = result['data'].get('booking_id')
-                time_display = info['time'].replace(':00', '')
-                
-                return f"""🎉 Perfect! Your reservation is confirmed!
-
-📋 **Booking Reference:** {booking_id}
-👤 **Name:** {info['name']}
-📅 **Date:** {info['date']}
-🕐 **Time:** {time_display}
-👥 **Party:** {info['party_size']} people
-
-💡 **Important:** Please save your booking reference ({booking_id}) for future reference.
-
-See you soon at TheHungryUnicorn! 🍽️"""
-            else:
-                return f"❌ Couldn't create booking: {result.get('error', 'Unknown error')}"
+            # Convert natural language time to 24-hour format
+            converted_time = self._convert_natural_time(time)
+            if converted_time:
+                time = converted_time
+            
+            result = self.tools['create_booking']._run(name, date, time, party_size)
+            return result
         except Exception as e:
             logger.error(f"Error creating booking: {e}")
-            return "❌ Error creating booking. Please try again."
-    
-    def clear_memory(self, session_id: Optional[str] = None):
-        """Clear conversation memory for a session."""
-        self.memory.clear()
-        if session_id and session_id in self.session_data:
-            del self.session_data[session_id]
-    
-    def _is_likely_name_input(self, message: str) -> bool:
-        """Check if message is likely a name input."""
+            return f"Sorry, I couldn't create the booking. Error: {str(e)}"
+
+    def _get_booking(self, reference: str) -> str:
+        """Get booking details using the tool."""
+        try:
+            result = self.tools['get_booking']._run(reference)
+            return result
+        except Exception as e:
+            logger.error(f"Error getting booking: {e}")
+            return f"Sorry, I couldn't find that booking. Error: {str(e)}"
+
+    def _cancel_booking(self, reference: str) -> str:
+        """Cancel a booking using the tool."""
+        try:
+            result = self.tools['cancel_booking']._run(reference)
+            return result
+        except Exception as e:
+            logger.error(f"Error canceling booking: {e}")
+            return f"Sorry, I couldn't cancel that booking. Error: {str(e)}"
+
+    def _extract_date_from_message(self, message: str) -> Optional[str]:
+        """Extract date from message."""
         import re
-        message = message.strip()
-        
-        # Check if it looks like a name (first and last name, capitalized)
-        name_pattern = r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$'
-        if re.match(name_pattern, message):
-            return True
-        
-        # Check for common name indicators
-        name_indicators = ['my name is', 'i am', "i'm", 'call me', 'this is']
         message_lower = message.lower()
-        if any(indicator in message_lower for indicator in name_indicators):
-            return True
-        
-        return False
-    
-    def _is_likely_date_input(self, message: str) -> bool:
-        """Check if message is likely a date input."""
-        message_lower = message.lower()
-        
-        # Check for date keywords
-        date_keywords = ['tomorrow', 'today', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'weekend']
-        if any(keyword in message_lower for keyword in date_keywords):
-            return True
         
         # Check for date patterns
-        import re
         date_patterns = [
-            r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
-            r'\d{1,2}/\d{1,2}/\d{2,4}',  # MM/DD/YYYY or DD/MM/YYYY
+            r'\b(tomorrow|today)\b',
+            r'\b(saturday|sunday|monday|tuesday|wednesday|thursday|friday)\b',
+            r'\b(next\s+(saturday|sunday|monday|tuesday|wednesday|thursday|friday))\b',
+            r'\b(this\s+(saturday|sunday|monday|tuesday|wednesday|thursday|friday))\b',
+            r'\b(weekend)\b',
+            r'\b(\d{4}-\d{2}-\d{2})\b'  # YYYY-MM-DD format
         ]
+        
         for pattern in date_patterns:
-            if re.search(pattern, message):
-                return True
+            if match := re.search(pattern, message_lower):
+                return match.group(1) if match.groups() else match.group(0)
         
-        return False
-    
-    def _is_likely_time_input(self, message: str) -> bool:
-        """Check if message is likely a time input."""
-        import re
-        message_lower = message.lower()
-        
-        # Check for time patterns
-        time_patterns = [
-            r'\d{1,2}:\d{2}',  # HH:MM
-            r'\d{1,2}\s*[ap]m',  # 7pm, 7 pm
-            r'\d{1,2}$',  # Just a number (assume time)
-        ]
-        
-        for pattern in time_patterns:
-            if re.search(pattern, message_lower):
-                return True
-        
-        return False
-    
-    def _is_likely_party_size_input(self, message: str) -> bool:
-        """Check if message is likely a party size input."""
-        import re
-        message_lower = message.lower()
-        
-        # Check for party size patterns
-        party_patterns = [
-            r'\d+\s*(?:people?|guests?|persons?)',
-            r'party of\s*\d+',
-            r'for\s*\d+',
-            r'^\d+$',  # Just a number
-        ]
-        
-        for pattern in party_patterns:
-            if re.search(pattern, message_lower):
-                return True
-        
-        return False
-    
-    def _extract_name_from_message(self, message: str) -> str:
-        """Extract name from message."""
-        import re
-        message = message.strip()
-        
-        # Check if it looks like a name (first and last name, capitalized)
-        name_pattern = r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$'
-        if match := re.match(name_pattern, message):
-            return match.group(0)
-        
-        # Check for common name indicators
-        name_indicators = ['my name is', 'i am', "i'm", 'call me', 'this is']
-        message_lower = message.lower()
-        for indicator in name_indicators:
-            if indicator in message_lower:
-                # Extract the name after the indicator
-                name_part = message_lower.split(indicator)[-1].strip()
-                if name_part:
-                    return name_part.title()
-        
-        return message.title()  # Default to the message as name
-    
-    def _extract_time_from_message(self, message: str) -> str:
+        return None
+
+    def _extract_time_from_message(self, message: str) -> Optional[str]:
         """Extract time from message."""
         import re
         message_lower = message.lower()
         
         # Check for time patterns
         time_patterns = [
-            r'(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<ampm>[ap]m)?',
-            r'(?P<hour>\d{1,2})\s*(?P<ampm>[ap]m)',
-            r'\b(?P<hour>\d{1,2})\b(?!\s*(?:people?|guests?|persons?))'
+            r'\b(\d{1,2}:\d{2})\b',  # HH:MM format
+            r'\b(\d{1,2}(?::\d{2})?\s*(am|pm))\b',  # 7pm, 7:30pm format
+            r'\b(\d{1,2})\s*(am|pm)\b'  # 7 am format
         ]
         
         for pattern in time_patterns:
             if match := re.search(pattern, message_lower):
-                try:
-                    hour = int(match.group("hour"))
-                    minute = int(match.group("minute")) if "minute" in match.groupdict() and match.group("minute") else 0
-                    meridiem = match.group("ampm") if "ampm" in match.groupdict() else None
-
-                    if meridiem == 'pm' and hour < 12:
-                        hour += 12
-                    elif meridiem == 'am' and hour == 12:
-                        hour = 0
-
-                    if 10 <= hour <= 23:
-                        return f"{hour:02d}:{minute:02d}:00"
-                except ValueError:
-                    continue
+                return match.group(0)
         
         return None
-    
-    def _extract_party_size_from_message(self, message: str) -> int:
+
+    def _extract_party_size_from_message(self, message: str) -> Optional[int]:
         """Extract party size from message."""
         import re
         message_lower = message.lower()
         
         # Check for party size patterns
         party_patterns = [
-            r'\b(\d+)\s*(?:people?|guests?|persons?)',
+            r'\b(\d+)\s*(?:people?|guests?|persons?)\b',
             r'party of\s*(\d+)',
             r'for\s*(\d+)',
             r'^(\d+)$'  # Just a number
@@ -642,4 +276,267 @@ See you soon at TheHungryUnicorn! 🍽️"""
                 except ValueError:
                     continue
         
+        # Also check for just numbers in the message
+        number_match = re.search(r'\b(\d+)\b', message_lower)
+        if number_match:
+            try:
+                num = int(number_match.group(1))
+                if 1 <= num <= 20:
+                    return num
+            except ValueError:
+                pass
+        
         return None
+
+    def _convert_natural_date(self, date_str: str) -> Optional[str]:
+        """Convert natural language date to YYYY-MM-DD format using dateparser."""
+        try:
+            import dateparser
+            from datetime import datetime
+            
+            # Parse the natural language date
+            parsed_date = dateparser.parse(date_str)
+            if parsed_date:
+                # Return in YYYY-MM-DD format
+                return parsed_date.strftime('%Y-%m-%d')
+            return None
+        except ImportError:
+            logger.warning("dateparser not installed, using original date string")
+            return date_str
+        except Exception as e:
+            logger.warning(f"Could not parse date '{date_str}': {e}")
+            return date_str
+
+    def _convert_natural_time(self, time_str: str) -> Optional[str]:
+        """Convert natural language time to 24-hour format."""
+        try:
+            import re
+            from datetime import datetime
+            
+            time_lower = time_str.lower().strip()
+            
+            # Handle common time formats
+            if 'pm' in time_lower:
+                # Extract hour
+                hour_match = re.search(r'(\d{1,2})', time_lower)
+                if hour_match:
+                    hour = int(hour_match.group(1))
+                    if hour != 12:
+                        hour += 12
+                    return f"{hour:02d}:00"
+            elif 'am' in time_lower:
+                # Extract hour
+                hour_match = re.search(r'(\d{1,2})', time_lower)
+                if hour_match:
+                    hour = int(hour_match.group(1))
+                    if hour == 12:
+                        hour = 0
+                    return f"{hour:02d}:00"
+            elif ':' in time_str:
+                # Already in HH:MM format
+                return time_str
+            
+            return None
+        except Exception as e:
+            logger.warning(f"Could not parse time '{time_str}': {e}")
+            return None
+
+    def process_message(self, message: str, session_id: Optional[str] = None) -> str:
+        """Process a user message and return a response."""
+        try:
+            # Initialize session if needed
+            if session_id and session_id not in self.session_data:
+                self.session_data[session_id] = {
+                    'booking_info': {},
+                    'conversation_step': 'greeting'
+                }
+            
+            session = self.session_data[session_id] if session_id else {}
+            booking_info = session.get('booking_info', {})
+            conversation_step = session.get('conversation_step', 'greeting')
+            
+            # Extract information from the message
+            extracted_info = self._extract_info(message)
+            intent = extracted_info.get('intent', 'unknown')
+            
+            logger.info(f"Extracted intent: {intent}, info: {extracted_info}")
+            
+            # Handle different intents with proper routing
+            if intent == 'greeting':
+                return """🍽️ Welcome to TheHungryUnicorn! I can help you with:
+
+• 📅 Check availability for any date
+• 🎯 Make a new reservation
+• 📋 View your existing booking details
+• ✏️ Modify or cancel your reservation
+
+What would you like to do today?"""
+            
+            elif intent == 'availability':
+                date = extracted_info.get('date')
+                if date:
+                    return self._check_availability(date)
+                else:
+                    return """📅 I can check availability for you! 
+
+What date and time are you interested in? You can say things like:
+• "tomorrow"
+• "saturday"
+• "next friday"
+• "2025-08-15"
+
+What date would you like to check?"""
+            
+            elif intent == 'check_booking':
+                reference = extracted_info.get('reference')
+                if reference:
+                    return self._get_booking(reference)
+                else:
+                    return """📋 I can help you check your booking details! 
+
+Please provide your booking reference number (it's usually a 6-8 character code like "ABC123" or just a number like "5")."""
+            
+            elif intent == 'cancel_booking':
+                reference = extracted_info.get('reference')
+                if reference:
+                    return self._cancel_booking(reference)
+                else:
+                    return """❌ I can help you cancel your reservation! 
+
+Please provide your booking reference number to cancel your reservation."""
+            
+            elif intent == 'booking':
+                # Update session with any new information
+                if session_id:
+                    if extracted_info.get('name'):
+                        session['booking_info']['name'] = extracted_info['name']
+                    if extracted_info.get('date'):
+                        session['booking_info']['date'] = extracted_info['date']
+                    if extracted_info.get('time'):
+                        session['booking_info']['time'] = extracted_info['time']
+                    if extracted_info.get('party_size'):
+                        session['booking_info']['party_size'] = extracted_info['party_size']
+                
+                # Check what we have and what we need
+                current_info = session.get('booking_info', {})
+                name = current_info.get('name') or extracted_info.get('name')
+                date = current_info.get('date') or extracted_info.get('date')
+                time = current_info.get('time') or extracted_info.get('time')
+                party_size = current_info.get('party_size') or extracted_info.get('party_size')
+                
+                # If we have all the information, create the booking
+                if all([name, date, time, party_size]):
+                    if session_id:
+                        # Clear the session after successful booking
+                        session['booking_info'] = {}
+                        session['conversation_step'] = 'greeting'
+                    return self._create_booking(name, date, time, party_size)
+                else:
+                    # Determine what's missing and ask for it
+                    missing_fields = []
+                    if not name:
+                        missing_fields.append("name")
+                    if not date:
+                        missing_fields.append("date")
+                    if not time:
+                        missing_fields.append("time")
+                    if not party_size:
+                        missing_fields.append("party_size")
+                    
+                    # Provide context about what we already have
+                    context_parts = []
+                    if name:
+                        context_parts.append(f"Name: {name}")
+                    if date:
+                        context_parts.append(f"Date: {date}")
+                    if time:
+                        context_parts.append(f"Time: {time}")
+                    if party_size:
+                        context_parts.append(f"Party size: {party_size}")
+                    
+                    context = ", ".join(context_parts) if context_parts else "No details yet"
+                    
+                    # Ask for the next missing field
+                    if not name:
+                        if session_id:
+                            session['conversation_step'] = 'asking_name'
+                        return f"""🎯 I'd be happy to help you make a reservation! 
+
+Current details: {context}
+
+What's your name?"""
+                    elif not date:
+                        if session_id:
+                            session['conversation_step'] = 'asking_date'
+                        return f"""Thanks {name}! 
+
+Current details: {context}
+
+What date would you like to visit? (e.g., 'tomorrow', 'saturday', 'next friday')"""
+                    elif not time:
+                        if session_id:
+                            session['conversation_step'] = 'asking_time'
+                        return f"""Great! 
+
+Current details: {context}
+
+What time would you prefer? (e.g., '7pm', '19:30')"""
+                    elif not party_size:
+                        if session_id:
+                            session['conversation_step'] = 'asking_party_size'
+                        return f"""Perfect! 
+
+Current details: {context}
+
+How many people will be in your party?"""
+            
+            # Handle step-by-step conversation with better context
+            elif conversation_step == 'asking_name':
+                name = extracted_info.get('name') or message.strip()
+                if session_id:
+                    session['booking_info']['name'] = name
+                    session['conversation_step'] = 'asking_date'
+                return f"Thanks {name}! What date would you like to visit? (e.g., 'tomorrow', 'saturday', 'next friday')"
+            
+            elif conversation_step == 'asking_date':
+                date = extracted_info.get('date') or message.strip()
+                if session_id:
+                    session['booking_info']['date'] = date
+                    session['conversation_step'] = 'asking_time'
+                return "What time would you prefer? (e.g., '7pm', '19:30')"
+            
+            elif conversation_step == 'asking_time':
+                time = extracted_info.get('time') or message.strip()
+                if session_id:
+                    session['booking_info']['time'] = time
+                    session['conversation_step'] = 'asking_party_size'
+                return "How many people will be in your party?"
+            
+            elif conversation_step == 'asking_party_size':
+                party_size = extracted_info.get('party_size')
+                if party_size and session_id:
+                    session['booking_info']['party_size'] = party_size
+                    # Create the booking with all collected info
+                    booking_info = session['booking_info']
+                    # Clear session after successful booking
+                    session['booking_info'] = {}
+                    session['conversation_step'] = 'greeting'
+                    return self._create_booking(
+                        booking_info['name'], 
+                        booking_info['date'], 
+                        booking_info['time'], 
+                        booking_info['party_size']
+                    )
+            
+            # Handle unknown intent or fallback
+            else:
+                # Check if this might be a booking reference number
+                if message.strip().isdigit():
+                    return self._get_booking(message.strip())
+                else:
+                    # Fallback: generate a natural response
+                    return self._generate_response(message)
+            
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            return "I'm having trouble understanding. Could you please try again?"
