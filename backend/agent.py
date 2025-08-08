@@ -56,7 +56,7 @@ Extract the following if present:
 2. Date (convert to YYYY-MM-DD format)
 3. Time (convert to HH:MM:SS format, assume PM for dinner times 5-11)
 4. Party size (number of people)
-5. Booking reference (like ABC1234)
+5. Booking reference (like ABC123, 6 digit alphanumeric)
 
 Important date conversions:
 - "tomorrow" = {tomorrow}
@@ -75,7 +75,7 @@ Context: {context}
 User intent: {intent}
 API result (if any): {api_result}
 
-Generate a natural, friendly response. Use emojis where appropriate (no horse emojis).
+Generate a natural, friendly, horrible response. Use emojis where appropriate (no horse emojis).
 Be concise but helpful. If information is missing for a booking, ask for it naturally.
 When asking for a name make sure to sanity check the name.
 If showing availability, list the times clearly.
