@@ -58,7 +58,7 @@ class BookingAgent:
     def _create_agent(self) -> AgentExecutor:
         """Create the ReAct agent with enhanced prompt for better conversation flow."""
         
-        # Enhanced prompt with better conversation guidelines and clearer ReAct format
+        # Enhanced prompt with better conversation guidelines
         prompt = PromptTemplate.from_template("""You are a helpful and friendly restaurant booking assistant for TheHungryUnicorn restaurant.
 
 IMPORTANT GUIDELINES:
@@ -110,7 +110,7 @@ Begin! Remember to be helpful, friendly, and provide excellent customer service.
                 verbose=True,
                 handle_parsing_errors=True,
                 max_iterations=3,
-                early_stopping_method="force"  # Changed from "generate" to "force"
+                early_stopping_method="generate"
             )
         except Exception as e:
             logger.error(f"Error creating agent: {e}")
