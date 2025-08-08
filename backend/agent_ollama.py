@@ -27,11 +27,12 @@ class BookingAgent:
     ):
         self.api_client = api_client
         
-        # Initialize Ollama LLM - simpler configuration
+        # Initialize Ollama LLM with optimized settings
         self.llm = ChatOllama(
             model=model_name,
             temperature=temperature,
-            base_url=base_url
+            base_url=base_url,
+            timeout=30
         )
         
         self.memory = ConversationBufferMemory(
@@ -48,34 +49,38 @@ class BookingAgent:
             CancelBookingTool(api_client)
         ]
         
-        # Create the agent with optimized prompt for Ollama
+        # Create the agent with enhanced prompt for better conversation flow
         self.agent_executor = self._create_agent()
         
-        # Store session data
+        # Store session data for better context management
         self.session_data: Dict[str, Any] = {}
     
     def _create_agent(self) -> AgentExecutor:
-        """Create the ReAct agent with Ollama-optimized prompt."""
+        """Create the ReAct agent with enhanced prompt for better conversation flow."""
         
-        # ReAct prompt with all required variables
-        prompt = PromptTemplate.from_template("""You are a helpful restaurant booking assistant for TheHungryUnicorn restaurant.
+        # Enhanced prompt with better conversation guidelines and clearer ReAct format
+        prompt = PromptTemplate.from_template("""You are a helpful and friendly restaurant booking assistant for TheHungryUnicorn restaurant.
 
-You have access to the following tools:
+IMPORTANT GUIDELINES:
+1. Always be polite, professional, and enthusiastic
+2. Ask for missing information when needed
+3. Provide clear, helpful responses with emojis when appropriate
+4. Remember context from previous messages in the conversation
+5. If a user mentions a date or time, use it in your responses
+6. If checking availability, suggest booking if times are available
+7. Always confirm important details before making changes
+8. Guide users step-by-step through the booking process
+
+You have access to these tools:
 
 {tools}
 
 Use a tool to answer questions or perform actions. You can use these tools: {tool_names}
 
-When helping customers:
-1. Be friendly and professional
-2. Ask for missing information when needed
-3. Confirm important details before making changes
-4. Provide booking references after creating reservations
-
 Previous conversation:
 {chat_history}
 
-Question: {input}
+Current question: {input}
 
 To answer, use this exact format:
 
@@ -87,7 +92,7 @@ Observation: the result of the action
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
 
-Begin! Remember to be helpful and friendly.
+Begin! Remember to be helpful, friendly, and provide excellent customer service.
 
 {agent_scratchpad}""")
         
@@ -105,7 +110,7 @@ Begin! Remember to be helpful and friendly.
                 verbose=True,
                 handle_parsing_errors=True,
                 max_iterations=3,
-                early_stopping_method="generate"
+                early_stopping_method="force"  # Changed from "generate" to "force"
             )
         except Exception as e:
             logger.error(f"Error creating agent: {e}")
@@ -114,7 +119,7 @@ Begin! Remember to be helpful and friendly.
     def process_message(self, message: str, session_id: Optional[str] = None) -> str:
         """Process a user message and return the agent's response."""
         try:
-            # Store any extracted booking info in session
+            # Store session data for better context management
             if session_id and session_id not in self.session_data:
                 self.session_data[session_id] = {}
             
@@ -132,35 +137,60 @@ Begin! Remember to be helpful and friendly.
             return self._fallback_response(message)
     
     def _fallback_response(self, message: str) -> str:
-        """Fallback to direct LLM response if agent fails."""
+        """Enhanced fallback response with better conversation handling."""
         try:
             # Parse message for intent
             message_lower = message.lower()
             
-            # Check for common intents
-            if any(word in message_lower for word in ['book', 'reserve', 'table']):
-                return "I'd be happy to help you make a reservation! I'll need a few details:\n- Your name\n- Date you'd like to visit\n- Time you prefer\n- Number of people in your party"
+            # Check for common intents with better responses
+            if any(word in message_lower for word in ['book', 'reserve', 'table', 'reservation']):
+                return """🎯 I'd be happy to help you make a reservation! 
+
+To get started, I'll need a few details:
+• Your name
+• Date you'd like to visit (e.g., "tomorrow", "saturday", "2025-08-15")
+• Time you prefer (e.g., "7pm", "19:30")
+• Number of people in your party
+
+What's your name?"""
             
-            elif any(word in message_lower for word in ['availability', 'available', 'free']):
-                return "I can check availability for you! What date and time are you interested in?"
+            elif any(word in message_lower for word in ['availability', 'available', 'free', 'times']):
+                return """📅 I can check availability for you! 
+
+What date and time are you interested in? You can say things like:
+• "tomorrow"
+• "saturday"
+• "next friday"
+• "2025-08-15"
+
+What date would you like to check?"""
             
             elif any(word in message_lower for word in ['cancel', 'cancellation']):
-                return "I can help you cancel your reservation. Could you please provide your booking reference?"
+                return """❌ I can help you cancel your reservation. 
+
+Could you please provide your booking reference? It's usually a 6-8 character code like "ABC123"."""
             
             elif any(word in message_lower for word in ['change', 'modify', 'update']):
-                return "I can help you modify your reservation. Please provide your booking reference and what you'd like to change."
+                return """✏️ I can help you modify your reservation. 
+
+Please provide:
+• Your booking reference
+• What you'd like to change (date, time, or party size)"""
             
             elif any(word in message_lower for word in ['check', 'status', 'my booking', 'my reservation']):
-                return "I can look up your reservation details. Please provide your booking reference."
+                return """📋 I can look up your reservation details. 
+
+Please provide your booking reference to see your reservation details."""
             
             else:
-                # General response using LLM
-                prompt = f"""You are a helpful restaurant booking assistant for TheHungryUnicorn.
-                
+                # General response using LLM with better prompt
+                prompt = f"""You are a helpful restaurant booking assistant for TheHungryUnicorn restaurant.
+
 Customer message: {message}
 
-Provide a brief, helpful response. If they want to make a booking, ask for: name, date, time, and party size.
+Provide a brief, friendly response. If they want to make a booking, ask for: name, date, time, and party size.
 If they want to check/modify/cancel, ask for their booking reference.
+Use emojis to make it friendly and engaging.
 
 Response:"""
                 
@@ -176,7 +206,14 @@ Response:"""
                     
         except Exception as e:
             logger.error(f"Fallback response error: {e}")
-            return "I'm here to help with restaurant bookings at TheHungryUnicorn. You can:\n• Make a new reservation\n• Check availability\n• View your booking details\n• Modify or cancel existing bookings\n\nWhat would you like to do?"
+            return """🍽️ Welcome to TheHungryUnicorn! I can help you with:
+
+• 📅 Check availability for any date
+• 🎯 Make a new reservation
+• 📋 View your existing booking details
+• ✏️ Modify or cancel your reservation
+
+What would you like to do today?"""
     
     def clear_memory(self, session_id: Optional[str] = None):
         """Clear conversation memory for a session."""

@@ -151,8 +151,11 @@ class CheckAvailabilityTool(BaseTool):
                 slots = data.get('available_slots', [])
                 if slots:
                     slot_times = [slot['time'] if isinstance(slot, dict) else slot for slot in slots]
+                    # Clean up time format
+                    clean_times = [time.replace(':00', '') for time in slot_times]
                     return f"✅ Available time slots for {parsed_date}:\n" + \
-                           "\n".join([f"  • {time}" for time in slot_times[:8]])  # Limit to 8 slots
+                           "\n".join([f"  • {time}" for time in clean_times[:8]]) + \
+                           f"\n\n🎯 To book one of these times, just reply with your preferred time!"
                 else:
                     return f"❌ No available slots for {parsed_date}. Would you like to try another date?"
             return f"✅ Restaurant has availability on {parsed_date}" + (f" at {parsed_time}" if parsed_time else "")
@@ -208,7 +211,9 @@ class CreateBookingTool(BaseTool):
 🕐 **Time:** {parsed_time}
 👥 **Party size:** {party_size}
 
-Please save your booking reference. See you soon at TheHungryUnicorn!"""
+💡 **Important:** Please save your booking reference ({booking_ref}) for future reference.
+
+See you soon at TheHungryUnicorn! 🍽️"""
             
             return response
         else:
