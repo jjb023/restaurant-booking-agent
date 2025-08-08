@@ -1,318 +1,355 @@
-"""Enhanced LangChain agent implementation with OpenAI and Ollama support."""
+"""Simplified agent that works reliably with Ollama."""
 
-from langchain.agents import AgentExecutor, create_openai_tools_agent, create_react_agent
-from langchain.memory import ConversationBufferMemory
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_community.llms import Ollama
-from langchain_community.chat_models import ChatOllama
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 import logging
 import re
-import os
+import json
+from datetime import datetime, timedelta
 from booking_client import BookingAPIClient
-from tools import (
-    CheckAvailabilityTool, CreateBookingTool, GetBookingTool,
-    UpdateBookingTool, CancelBookingTool
-)
+from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama
 
 logger = logging.getLogger(__name__)
 
 
-class BookingAgent:
-    """Conversational agent for restaurant bookings with multi-LLM support."""
+class SimpleBookingAgent:
+    """Simplified booking agent that works well with Ollama."""
     
     def __init__(
         self, 
         api_client: BookingAPIClient, 
-        llm_provider: str = "openai",
+        llm_provider: str = "ollama",
         llm_model: str = None, 
-        temperature: float = 0.3,
+        temperature: float = 0.1,
         ollama_base_url: str = "http://localhost:11434"
     ):
-        """
-        Initialize the booking agent.
-        
-        Args:
-            api_client: BookingAPIClient instance
-            llm_provider: "openai" or "ollama"
-            llm_model: Model name (e.g., "gpt-4" for OpenAI, "llama2" for Ollama)
-            temperature: LLM temperature setting
-            ollama_base_url: Base URL for Ollama server
-        """
         self.api_client = api_client
         self.llm_provider = llm_provider.lower()
-        self.temperature = temperature
         
-        # Initialize LLM based on provider
+        # Initialize LLM
         if self.llm_provider == "ollama":
-            if not llm_model:
-                llm_model = "llama2"  # Default Ollama model
             self.llm = ChatOllama(
-                model=llm_model,
+                model=llm_model or "llama3.2:3b",
                 temperature=temperature,
-                base_url=ollama_base_url
+                base_url=ollama_base_url,
+                format="json",  # Request JSON format
+                timeout=30
             )
-            logger.info(f"Using Ollama with model: {llm_model}")
-        else:  # Default to OpenAI
-            if not llm_model:
-                llm_model = "gpt-4"  # Default OpenAI model
+            logger.info(f"Using Ollama with model: {llm_model or 'llama3.2:3b'}")
+        else:
             self.llm = ChatOpenAI(
-                model=llm_model,
+                model=llm_model or "gpt-3.5-turbo",
                 temperature=temperature
             )
-            logger.info(f"Using OpenAI with model: {llm_model}")
+            logger.info(f"Using OpenAI with model: {llm_model or 'gpt-3.5-turbo'}")
         
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        
-        # Initialize tools
-        self.tools = [
-            CheckAvailabilityTool(api_client),
-            CreateBookingTool(api_client),
-            GetBookingTool(api_client),
-            UpdateBookingTool(api_client),
-            CancelBookingTool(api_client)
-        ]
-        
-        # Create the agent
-        self.agent_executor = self._create_agent()
-        
-        # Store session data for context
-        self.session_data: Dict[str, Any] = {}
-        self.context_tracker: Dict[str, Any] = {}
+        # Conversation history
+        self.conversations = {}
     
-    def _create_agent(self) -> AgentExecutor:
-        """Create an agent based on the LLM provider."""
+    def _parse_date(self, date_str: str) -> str:
+        """Parse natural language dates."""
+        if not date_str:
+            return datetime.now().strftime('%Y-%m-%d')
         
-        system_prompt = """You are a friendly and professional restaurant booking assistant for TheHungryUnicorn restaurant. 
-Your goal is to help customers make, check, modify, and cancel their reservations efficiently.
-
-IMPORTANT GUIDELINES:
-
-1. **Collecting Information**:
-   - For new bookings, you need: customer name, date, time, party size, and optionally contact number
-   - Accept simple numeric inputs for party size (e.g., "4" means 4 people)
-   - Parse natural language dates like "tomorrow", "next Friday", "this weekend"
-   - Understand time formats like "7pm", "19:00", "7:30 PM"
-
-2. **Customer Names**:
-   - ALWAYS ask for the customer's actual name when making a booking
-   - NEVER use tool names or action names as customer names
-   - If the user hasn't provided their name, politely ask for it
-
-3. **Response Formatting**:
-   - Use proper markdown formatting in responses
-   - Use emojis to make responses friendly
-   - Include line breaks for readability
-   - Format booking confirmations clearly with each detail on a new line
-
-4. **Conversation Flow**:
-   - Be conversational and natural
-   - Confirm details before making changes
-   - Provide booking references prominently after creating reservations
-   - Handle errors gracefully with helpful suggestions
-
-5. **Information Extraction**:
-   - When user says just a number in response to "how many people", interpret it as party size
-   - Be flexible with date/time formats
-   - Remember context from previous messages
-
-Remember: You're helping real customers, so be warm, helpful, and efficient."""
-
-        if self.llm_provider == "ollama":
-            # Use ReAct agent for Ollama (better compatibility)
-            prompt = PromptTemplate.from_template(f"""{system_prompt}
-
-You have access to the following tools:
-{{tools}}
-
-Previous conversation:
-{{chat_history}}
-
-Customer: {{input}}
-
-Use this format:
-Thought: Consider what the customer needs
-Action: the action to take (one of [{{tool_names}}])
-Action Input: the input to the action
-Observation: the result of the action
-... (repeat if necessary)
-Thought: I now know the final answer
-Final Answer: the final answer to the customer
-
-{{agent_scratchpad}}""")
-            
-            agent = create_react_agent(
-                llm=self.llm,
-                tools=self.tools,
-                prompt=prompt
-            )
-            
-            logger.info("Created ReAct agent for Ollama")
-            
-        else:
-            # Use OpenAI Tools agent for OpenAI (better performance)
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{input}"),
-                MessagesPlaceholder(variable_name="agent_scratchpad"),
-            ])
-            
-            agent = create_openai_tools_agent(
-                llm=self.llm,
-                tools=self.tools,
-                prompt=prompt
-            )
-            
-            logger.info("Created OpenAI Tools agent")
+        date_str = date_str.lower().strip()
+        today = datetime.now()
         
-        return AgentExecutor(
-            agent=agent,
-            tools=self.tools,
-            memory=self.memory,
-            verbose=True,
-            handle_parsing_errors=True,
-            max_iterations=5,
-            return_intermediate_steps=False
-        )
+        if 'today' in date_str:
+            return today.strftime('%Y-%m-%d')
+        elif 'tomorrow' in date_str:
+            return (today + timedelta(days=1)).strftime('%Y-%m-%d')
+        elif 'weekend' in date_str:
+            days_ahead = 5 - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+        
+        # Try to find weekday names
+        weekdays = {
+            'monday': 0, 'tuesday': 1, 'wednesday': 2,
+            'thursday': 3, 'friday': 4, 'saturday': 5, 'sunday': 6
+        }
+        
+        for day_name, day_num in weekdays.items():
+            if day_name in date_str:
+                days_ahead = day_num - today.weekday()
+                if days_ahead <= 0:
+                    days_ahead += 7
+                if 'next' in date_str:
+                    days_ahead += 7
+                return (today + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+        
+        return date_str
     
-    def _extract_context(self, message: str, session_id: str) -> Dict[str, Any]:
-        """Extract and maintain context from user messages."""
-        context = self.context_tracker.get(session_id, {})
+    def _parse_time(self, time_str: str) -> str:
+        """Parse natural language times."""
+        if not time_str:
+            return "19:00"
         
-        # Extract party size from simple numbers
-        if message.strip().isdigit():
-            context['party_size'] = int(message.strip())
-            return context
+        time_str = time_str.lower().strip()
         
-        # Extract party size from text
-        party_patterns = [
-            r'(\d+)\s*(?:people|persons?|guests?|pax)',
-            r'(?:table\s+for|party\s+of)\s*(\d+)',
-            r'(\d+)\s*(?:of\s+us)',
-        ]
-        for pattern in party_patterns:
-            match = re.search(pattern, message.lower())
-            if match:
-                context['party_size'] = int(match.group(1))
-                break
+        # Extract time pattern
+        match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*([ap]m)?', time_str)
+        if match:
+            hour = int(match.group(1))
+            minute = int(match.group(2) or 0)
+            meridiem = match.group(3)
+            
+            if meridiem == 'pm' and hour < 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+            
+            return f"{hour:02d}:{minute:02d}"
         
-        # Extract time
-        time_patterns = [
-            r'(\d{1,2})\s*(?::(\d{2}))?\s*([ap]m)',
-            r'(\d{1,2}):(\d{2})',
-        ]
-        for pattern in time_patterns:
-            match = re.search(pattern, message.lower())
-            if match:
-                context['time'] = match.group(0)
-                break
-        
-        # Extract date references
-        date_keywords = ['today', 'tomorrow', 'weekend', 'monday', 'tuesday', 'wednesday', 
-                        'thursday', 'friday', 'saturday', 'sunday']
-        for keyword in date_keywords:
-            if keyword in message.lower():
-                context['date_reference'] = keyword
-                break
-        
-        # Extract name (look for capitalized words that aren't common words)
-        if 'name' in message.lower() or 'i am' in message.lower() or "i'm" in message.lower():
-            # Try to extract name after "my name is", "I am", "I'm"
-            name_patterns = [
-                r"(?:my\s+name\s+is|i\s+am|i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-                r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)$",  # Just a name on its own line
-            ]
-            for pattern in name_patterns:
-                match = re.search(pattern, message, re.IGNORECASE)
-                if match:
-                    potential_name = match.group(1).strip()
-                    # Filter out tool names and common words
-                    if potential_name.lower() not in ['check', 'cancel', 'update', 'create', 'booking', 'reservation']:
-                        context['customer_name'] = potential_name
-                        break
-        
-        self.context_tracker[session_id] = context
-        return context
+        return time_str
     
-    def _format_response(self, response: str) -> str:
-        """Ensure proper formatting of the response."""
-        # Fix markdown formatting
-        response = response.replace('**', '**')
-        response = response.replace('📋 **', '📋 **')
-        response = response.replace('👤 **', '\n👤 **')
-        response = response.replace('📅 **', '\n📅 **')
-        response = response.replace('🕐 **', '\n🕐 **')
-        response = response.replace('👥 **', '\n👥 **')
-        
-        # Ensure line breaks are preserved
-        response = re.sub(r'([.!?])\s+([A-Z])', r'\1\n\n\2', response)
-        
-        return response
+    def _extract_intent_and_details(self, message: str) -> Dict[str, Any]:
+        """Extract intent and details from the message using LLM."""
+        prompt = f"""Analyze this restaurant booking request and extract the information as JSON.
+
+Message: "{message}"
+
+Return ONLY valid JSON with these fields (use null if not provided):
+{{
+  "intent": "check_availability" or "create_booking" or "get_booking" or "update_booking" or "cancel_booking" or "general",
+  "customer_name": "name or null",
+  "date": "date mentioned or null", 
+  "time": "time mentioned or null",
+  "party_size": number or null,
+  "booking_id": "booking reference or null"
+}}
+
+Examples:
+- "I want to book a table for 4 tomorrow at 7pm" -> {{"intent": "create_booking", "customer_name": null, "date": "tomorrow", "time": "7pm", "party_size": 4, "booking_id": null}}
+- "Check availability for this weekend" -> {{"intent": "check_availability", "customer_name": null, "date": "this weekend", "time": null, "party_size": null, "booking_id": null}}
+- "My name is John Smith" -> {{"intent": "general", "customer_name": "John Smith", "date": null, "time": null, "party_size": null, "booking_id": null}}
+- "4" -> {{"intent": "general", "customer_name": null, "date": null, "time": null, "party_size": 4, "booking_id": null}}"""
+
+        try:
+            response = self.llm.invoke(prompt)
+            content = response.content if hasattr(response, 'content') else str(response)
+            
+            # Try to extract JSON from the response
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+            else:
+                logger.error(f"No JSON found in response: {content}")
+                return {"intent": "general"}
+        except Exception as e:
+            logger.error(f"Error extracting intent: {e}")
+            
+            # Fallback to simple pattern matching
+            intent = "general"
+            if any(word in message.lower() for word in ['book', 'reservation', 'table for']):
+                intent = "create_booking"
+            elif 'availability' in message.lower() or 'available' in message.lower():
+                intent = "check_availability"
+            elif 'cancel' in message.lower():
+                intent = "cancel_booking"
+            elif any(word in message.lower() for word in ['check', 'my booking', 'my reservation']):
+                intent = "get_booking"
+            
+            # Extract details with regex
+            details = {"intent": intent}
+            
+            # Extract party size
+            party_match = re.search(r'\b(\d+)\s*(?:people|persons?|guests?)?\b', message)
+            if party_match:
+                details["party_size"] = int(party_match.group(1))
+            
+            # Extract time
+            time_match = re.search(r'\b(\d{1,2})(?::(\d{2}))?\s*([ap]m)\b', message.lower())
+            if time_match:
+                details["time"] = time_match.group(0)
+            
+            # Extract booking ID
+            booking_match = re.search(r'\b([A-Z0-9]{6,8})\b', message)
+            if booking_match:
+                details["booking_id"] = booking_match.group(1)
+            
+            return details
     
     def process_message(self, message: str, session_id: Optional[str] = None) -> str:
-        """
-        Process a user message and return the agent's response.
-        
-        Args:
-            message: The user's message
-            session_id: Optional session ID for maintaining conversation state
-        
-        Returns:
-            The agent's response with proper formatting
-        """
+        """Process a user message and return a response."""
         try:
-            # Initialize session if needed
-            if session_id:
-                if session_id not in self.session_data:
-                    self.session_data[session_id] = {}
-                    self.context_tracker[session_id] = {}
-                
-                # Extract context from message
-                context = self._extract_context(message, session_id)
-                
-                # Store context in session
-                self.session_data[session_id].update(context)
-                
-                # Augment message with context if it's a simple number
-                if message.strip().isdigit():
-                    message = f"{message} people"
+            # Initialize conversation history
+            if session_id not in self.conversations:
+                self.conversations[session_id] = {
+                    "history": [],
+                    "context": {}
+                }
             
-            # Run the agent
-            response = self.agent_executor.invoke({"input": message})
+            conversation = self.conversations[session_id]
+            conversation["history"].append({"role": "user", "message": message})
             
-            # Extract the actual response
-            if isinstance(response, dict):
-                response_text = response.get('output', str(response))
+            # Extract intent and details
+            details = self._extract_intent_and_details(message)
+            
+            # Update context with new information
+            for key in ["customer_name", "date", "time", "party_size", "booking_id"]:
+                if details.get(key):
+                    conversation["context"][key] = details[key]
+            
+            # Handle based on intent
+            intent = details.get("intent", "general")
+            
+            if intent == "check_availability":
+                return self._handle_check_availability(conversation["context"])
+            
+            elif intent == "create_booking":
+                return self._handle_create_booking(conversation["context"], message)
+            
+            elif intent == "get_booking":
+                return self._handle_get_booking(conversation["context"])
+            
+            elif intent == "cancel_booking":
+                return self._handle_cancel_booking(conversation["context"])
+            
+            elif intent == "update_booking":
+                return self._handle_update_booking(conversation["context"])
+            
             else:
-                response_text = str(response)
-            
-            # Format the response
-            formatted_response = self._format_response(response_text)
-            
-            return formatted_response
-            
+                # General conversation - check what info we need
+                return self._handle_general_conversation(conversation["context"], message)
+                
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            error_msg = "I apologize, but I encountered an error processing your request."
+            return "I apologize, but I encountered an error. Could you please rephrase your request?"
+    
+    def _handle_check_availability(self, context: Dict) -> str:
+        """Handle availability check."""
+        date = self._parse_date(context.get("date", "today"))
+        time = self._parse_time(context.get("time")) if context.get("time") else None
+        party_size = context.get("party_size")
+        
+        result = self.api_client.check_availability(date, time, party_size)
+        
+        if result['success']:
+            data = result.get('data', {})
+            slots = data.get('available_slots', [])
             
-            # Add provider-specific error messages
-            if self.llm_provider == "ollama":
-                error_msg += " Please ensure the Ollama server is running (ollama serve)."
-            elif "api" in str(e).lower() and "key" in str(e).lower():
-                error_msg += " Please check your OpenAI API key configuration."
-            
-            return error_msg
+            if slots:
+                slot_list = "\n".join([f"  • {s['time'] if isinstance(s, dict) else s}" for s in slots[:8]])
+                return f"✅ Available times for {date}:\n{slot_list}\n\nWould you like to book one of these times?"
+            else:
+                return f"❌ No available slots for {date}. Would you like to check another date?"
+        else:
+            return "I couldn't check availability. Please try again."
+    
+    def _handle_create_booking(self, context: Dict, original_message: str) -> str:
+        """Handle booking creation."""
+        # Check what's missing
+        missing = []
+        if not context.get("customer_name"):
+            missing.append("your name")
+        if not context.get("date"):
+            missing.append("the date")
+        if not context.get("time"):
+            missing.append("the time")
+        if not context.get("party_size"):
+            missing.append("the number of people")
+        
+        if missing:
+            return f"I'd be happy to make a reservation! I just need {', '.join(missing)}. Could you provide that?"
+        
+        # Parse date and time
+        date = self._parse_date(context["date"])
+        time = self._parse_time(context["time"])
+        
+        # Create booking
+        result = self.api_client.create_booking(
+            customer_name=context["customer_name"],
+            date=date,
+            time=time,
+            party_size=context["party_size"],
+            contact_number=context.get("contact_number"),
+            special_requests=context.get("special_requests")
+        )
+        
+        if result['success']:
+            booking_id = result['data'].get('booking_id', 'N/A')
+            return f"""🎉 Perfect! Your reservation is confirmed!
+
+📋 **Booking Reference:** {booking_id}
+👤 **Name:** {context["customer_name"]}
+📅 **Date:** {date}
+🕐 **Time:** {time}
+👥 **Party size:** {context["party_size"]}
+
+Please save your booking reference. See you soon at TheHungryUnicorn!"""
+        else:
+            return f"❌ I couldn't complete the booking: {result.get('error', 'Unknown error')}"
+    
+    def _handle_get_booking(self, context: Dict) -> str:
+        """Handle booking lookup."""
+        if not context.get("booking_id"):
+            return "Please provide your booking reference number so I can look it up."
+        
+        result = self.api_client.get_booking(context["booking_id"])
+        
+        if result['success']:
+            booking = result['data']
+            return f"""📋 Your Booking Details:
+
+**Reference:** {booking.get('booking_id')}
+**Name:** {booking.get('customer_name')}
+**Date:** {booking.get('date')}
+**Time:** {booking.get('time')}
+**Party Size:** {booking.get('party_size')}
+**Status:** {booking.get('status', 'Confirmed')}"""
+        else:
+            return f"❌ Could not find booking: {context['booking_id']}"
+    
+    def _handle_cancel_booking(self, context: Dict) -> str:
+        """Handle booking cancellation."""
+        if not context.get("booking_id"):
+            return "Please provide your booking reference number to cancel."
+        
+        result = self.api_client.cancel_booking(context["booking_id"])
+        
+        if result['success']:
+            return f"✅ Booking {context['booking_id']} has been cancelled successfully."
+        else:
+            return f"❌ Could not cancel booking: {result.get('error')}"
+    
+    def _handle_update_booking(self, context: Dict) -> str:
+        """Handle booking updates."""
+        if not context.get("booking_id"):
+            return "Please provide your booking reference number to update."
+        
+        # Implement update logic here
+        return "To update your booking, please let me know what you'd like to change (date, time, or party size)."
+    
+    def _handle_general_conversation(self, context: Dict, message: str) -> str:
+        """Handle general conversation."""
+        # Check if it's just a number (party size)
+        if message.strip().isdigit():
+            context["party_size"] = int(message.strip())
+            return self._handle_create_booking(context, message)
+        
+        # Check if it's a name
+        if any(phrase in message.lower() for phrase in ["my name is", "i am", "i'm"]):
+            # Name was likely extracted
+            return "Nice to meet you! What can I help you with today?"
+        
+        # Default response
+        return """Hello! I can help you with:
+• Making a new reservation
+• Checking availability
+• Looking up your booking
+• Cancelling a reservation
+
+What would you like to do?"""
     
     def clear_memory(self, session_id: Optional[str] = None):
-        """Clear conversation memory for a session."""
-        self.memory.clear()
-        if session_id:
-            if session_id in self.session_data:
-                del self.session_data[session_id]
-            if session_id in self.context_tracker:
-                del self.context_tracker[session_id]
+        """Clear conversation memory."""
+        if session_id and session_id in self.conversations:
+            del self.conversations[session_id]
+
+
+# Create a wrapper for compatibility
+class BookingAgent(SimpleBookingAgent):
+    """Wrapper for compatibility with existing code."""
+    pass
