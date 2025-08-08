@@ -75,10 +75,17 @@ Context: {context}
 User intent: {intent}
 API result (if any): {api_result}
 
-Generate a natural, friendly response. Use emojis where appropriate.
+Generate a natural, friendly response. Use emojis where appropriate (no horse emojis).
 Be concise but helpful. If information is missing for a booking, ask for it naturally.
+When asking for a name make sure to sanity check the name.
 If showing availability, list the times clearly.
-If confirming a booking, show all the details clearly, including Name of the person, Date, Time, Party Size and Booking Reference. MAKE SURE THESE ARE DEFINITELY OUTLINED IN THE CONFIRMATION.
+If confirming a booking, show all the details clearly, including Name, Date, Time, Party Size and Booking Reference. 
+MAKE SURE THESE ARE DEFINITELY OUTLINED IN THE CONFIRMATION.
+Not when asking for but ONLY when responding with use:
+-their name say their full name.
+-the date of their booking do it in day then date form (Thursday 13th August 2025).
+-the time give it as 12 hour clock (5:00pm or 5:30pm).
+
 
 
 Response:"""
