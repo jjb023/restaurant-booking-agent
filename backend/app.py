@@ -31,10 +31,11 @@ api_client = BookingAPIClient(
 )
 
 # Initialize Ollama agent with better configuration
+# Use llama3.2:3b specifically - the 3b variant is more stable
 agent = BookingAgent(
     api_client=api_client,
-    model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
-    temperature=0.3,
+    model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),  # Changed to llama3.2:3b
+    temperature=0.1,  # Keep low for consistency
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 )
 
@@ -58,32 +59,86 @@ async def chat(msg: ChatMessage) -> ChatResponse:
         response = agent.process_message(msg.message, session_id)
         return ChatResponse(response=response, session_id=session_id)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error processing message: {e}")
+        # Provide a more helpful error message
+        if "ollama" in str(e).lower():
+            error_msg = "Cannot connect to Ollama. Please ensure:\n1. Ollama is installed\n2. Ollama server is running (ollama serve)\n3. Model is pulled (ollama pull llama3.2:3b)"
+        else:
+            error_msg = f"Error: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.post("/reset/{session_id}")
 async def reset(session_id: str):
     """Reset session."""
     agent.clear_memory(session_id)
-    return {"message": "Session reset"}
+    return {"message": "Session reset", "session_id": session_id}
 
 
 @app.get("/")
 async def root():
     """Serve frontend."""
-    if os.path.exists("../frontend/index.html"):
-        return FileResponse("../frontend/index.html")
-    return {"message": "Chat API running"}
+    frontend_path = "../frontend/index.html"
+    if os.path.exists(frontend_path):
+        return FileResponse(frontend_path)
+    return {"message": "Chat API running on http://localhost:8000", "docs": "http://localhost:8000/docs"}
 
 
 @app.get("/health")
 async def health():
-    """Health check."""
-    return {"status": "healthy"}
+    """Health check with service status."""
+    try:
+        # Check if we can reach Ollama
+        import requests
+        ollama_status = "unknown"
+        try:
+            resp = requests.get("http://localhost:11434/api/tags", timeout=2)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                ollama_status = f"running ({len(models)} models)"
+            else:
+                ollama_status = "not responding"
+        except:
+            ollama_status = "not running"
+        
+        # Check if we can reach the booking API
+        booking_api_status = "unknown"
+        try:
+            resp = requests.get("http://localhost:8547/docs", timeout=2)
+            if resp.status_code == 200:
+                booking_api_status = "running"
+            else:
+                booking_api_status = "not responding"
+        except:
+            booking_api_status = "not running"
+        
+        return {
+            "status": "healthy",
+            "services": {
+                "ollama": ollama_status,
+                "booking_api": booking_api_status
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "partial",
+            "error": str(e)
+        }
 
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting server on http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # Print startup information
+    print("\n" + "="*60)
+    print("🦄 TheHungryUnicorn Booking Agent")
+    print("="*60)
+    print(f"✅ Starting server on http://localhost:8000")
+    print(f"📚 API Documentation: http://localhost:8000/docs")
+    print(f"🌐 Web Interface: http://localhost:8000")
+    print("\nMake sure these services are running:")
+    print("1. Ollama: ollama serve")
+    print("2. Booking API: cd ../Restaurant-Booking-Mock-API-Server && python -m app")
+    print("="*60 + "\n")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
