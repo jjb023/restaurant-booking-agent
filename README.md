@@ -30,7 +30,12 @@ git clone https://github.com/jjb023/restaurant-booking-agent
 cd restaurant-booking-agent
 ```
 
-2. **Start the Mock Booking API**
+2. **Clone Mock Booking Server into Folder**
+```bash
+git clone https://github.com/AppellaAI/Restaurant-Booking-Mock-API-Server
+```
+
+3. **Start the Mock Booking API**
 ```bash
 cd Restaurant-Booking-Mock-API-Server
 pip install -r requirements.txt
@@ -38,7 +43,7 @@ python -m app
 # Server runs on http://localhost:8547
 ```
 
-3. **Setup the Agent Backend** (in new terminal)
+4. **Setup the Agent Backend** (in new terminal)
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -51,18 +56,35 @@ ollama serve  # In another terminal
 # Add your API key to .env file
 ```
 
-4. **Configure Environment**
+5. **Configure Environment**
 ```bash
 # Create .env file in backend/
 cp .env.example .env
 # Edit .env to set your preferred LLM provider
 ```
 
-5. **Start the Agent**
+6. **Start the Agent**
 ```bash
-python app.py
+python uvicorn app:app --reload
 # Access at http://localhost:8000
 ```
+
+## Configuration
+
+The application supports both local (Ollama) and cloud (OpenAI) LLM providers.
+
+### Using Ollama (Recommended for privacy)
+- Default configuration uses Ollama with llama3.2:3b model
+- Ensure Ollama is running: `ollama serve`
+- No API keys required
+
+### Using OpenAI (Optional)
+- Set `LLM_PROVIDER=openai` in `.env`
+- Add your OpenAI API key to `OPENAI_API_KEY`
+- Offers faster responses but requires API costs
+
+### Environment Variables
+See `.env.example` for all available configuration options.
 
 ## Design Rationale
 
