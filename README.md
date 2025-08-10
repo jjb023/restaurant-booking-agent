@@ -26,7 +26,7 @@ This solution implements an intelligent restaurant booking assistant that handle
 
 1. **Clone the repository**
 ```bash
-git clone [your-repo-url]
+git clone https://github.com/jjb023/restaurant-booking-agent
 cd restaurant-booking-agent
 ```
 
@@ -66,24 +66,24 @@ python app.py
 
 ## Design Rationale
 
-### 1. Framework Selection
+### 1. Framework
 
 #### **LangChain + Ollama**
-- **Why:** Provides production-grade abstractions for LLM interactions while maintaining flexibility
+- **Why:** Provides production-grade tools for LLM interactions while maintaining flexibility
 - **Trade-off:** Added complexity vs raw API calls, but gains reliability and maintainability
 - **Alternative considered:** Direct Ollama API integration (simpler but less feature-rich)
 
 #### **FastAPI Backend**
-- **Why:** Async support, automatic API documentation, production-ready performance
-- **Trade-off:** Slightly more complex than Flask, but better for production scaling
+- **Why:** Comes with automatic API documentation, strong production performance, async support
+- **Trade-off:** Slightly more complex setup than Flask, but better for scaling to a higher number of users
 - **Benefits:** Built-in validation, OpenAPI docs, WebSocket support for future enhancements
 
 #### **Local LLM via Ollama**
 - **Why:** Complete data privacy, no API costs, offline capability
-- **Trade-off:** Requires more resources locally, slightly slower than GPT-4
+- **Trade-off:** Requires more processing power locally, therefore slightly slower than cloud models like GPT-4
 - **Innovation:** Dual support for both Ollama and OpenAI for flexibility
 
-### 2. Architecture Decisions
+### 2. Architecture
 
 #### **Simplified Agent Design**
 Instead of complex LangChain agents with tools, I implemented a streamlined approach:
@@ -112,7 +112,7 @@ Instead of complex LangChain agents with tools, I implemented a streamlined appr
 
 #### **Smart Date/Time Parsing**
 - Handles natural language ("tomorrow", "next Friday", "7pm")
-- **Why:** Reduces cognitive load on users
+- **Why:** More flexible with user language
 - **Implementation:** Custom parser with fallback to LLM understanding
 
 #### **Visual Feedback**
@@ -182,7 +182,6 @@ Users → Load Balancer → FastAPI Cluster → Message Queue → LLM Service
 
 1. **Additional Layers**
    - Rate limiting per user/IP
-   - HTTPS enforcement with TLS 1.3
    - API key rotation mechanism
    - Web Application Firewall (WAF)
 
@@ -216,7 +215,6 @@ Users → Load Balancer → FastAPI Cluster → Message Queue → LLM Service
 
 1. **Enhanced NLU**
    - Fine-tune model on restaurant booking conversations
-   - Add entity recognition for better accuracy
    - Implement confidence scoring
 
 2. **Proactive Features**
@@ -228,7 +226,6 @@ Users → Load Balancer → FastAPI Cluster → Message Queue → LLM Service
    - Calendar integration
    - SMS/Email confirmations
    - Payment processing
-   - Loyalty program integration
 
 ## Innovation Highlights
 
