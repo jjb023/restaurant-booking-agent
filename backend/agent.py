@@ -9,7 +9,6 @@ from booking_client import BookingAPIClient
 
 logger = logging.getLogger(__name__)
 
-
 class BookingAgent:
     def __init__(self, api_client: BookingAPIClient, model: str = "llama3.2:3b", 
                  temperature: float = 0.1, base_url: str = "http://localhost:11434"):

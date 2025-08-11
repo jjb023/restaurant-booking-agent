@@ -31,7 +31,7 @@ api_client = BookingAPIClient(
 )
 
 # Initialize Ollama agent with better configuration
-# Use llama3.2:3b specifically - the 3b variant is more stable
+# Use llama3.2:3b 
 agent = BookingAgent(
     api_client=api_client,
     model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),  # Changed to llama3.2:3b
@@ -129,7 +129,6 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     
-    # Print startup information
     print("\n" + "="*60)
     print("🦄 TheHungryUnicorn Booking Agent")
     print("="*60)

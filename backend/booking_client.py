@@ -41,7 +41,6 @@ class BookingAPIClient:
                 'ChannelCode': 'ONLINE'
             }
             
-            # Use POST instead of GET
             response = requests.post(
                 endpoint,
                 data=urlencode(data),
@@ -67,7 +66,6 @@ class BookingAPIClient:
             special_requests: Optional special requests
         """
         try:
-            # Correct endpoint path
             endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/BookingWithStripeToken"
             
             # Parse name into first and last
@@ -134,7 +132,6 @@ class BookingAPIClient:
             **kwargs: Fields to update (date, time, party_size, etc.)
         """
         try:
-            # Correct endpoint path
             endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/Booking/{booking_id}"
             
             data = {}
@@ -169,13 +166,12 @@ class BookingAPIClient:
             booking_id: The booking reference ID
         """
         try:
-            # Correct endpoint path
             endpoint = f"{self.base_url}/api/ConsumerApi/v1/Restaurant/{self.restaurant_name}/Booking/{booking_id}/Cancel"
             
             data = {
                 'micrositeName': self.restaurant_name,
                 'bookingReference': booking_id,
-                'cancellationReasonId': '1'  # Customer Request
+                'cancellationReasonId': '1'  
             }
             
             response = requests.post(
