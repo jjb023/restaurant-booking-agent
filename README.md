@@ -65,8 +65,14 @@ cp .env.example .env
 
 6. **Start the Agent**
 ```bash
-python uvicorn app:app --reload
+uvicorn app:app --reload
 # Access at http://localhost:8000
+```
+
+7. **Start the Server**
+```bash
+cd frontend
+python3 -m http.server 8080
 ```
 
 ## Configuration
